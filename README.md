@@ -4,6 +4,16 @@ Run [Codex](https://github.com/openai/codex#codex-exec) from a GitHub Actions wo
 
 Users must provide an API key for their chosen provider (for example, [`OPENAI_API_KEY`](https://platform.openai.com/api-keys) or `AZURE_OPENAI_API_KEY` [if using Azure for OpenAI models](#azure)) as a [GitHub Actions secret](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets) to use this action.
 
+## What's different in this fork?
+
+This fork builds on [`openai/codex-action`](https://github.com/openai/codex-action) so you can drop it into existing workflows while picking up a few opinionated improvements:
+
+- **ChatGPT subscription auth support** &mdash; provide `codex-auth-json-b64`, and the action writes your exported `auth.json` into `CODEX_HOME` so Codex can run without an API key. See [`docs/subscription-auth.md`](./docs/subscription-auth.md) for the full walkthrough plus the [`examples/code-review-subscription.yml`](./examples/code-review-subscription.yml) workflow.
+- **Secret-scoped environment passthrough** &mdash; the `pass-through-env` input acts as an allowlist so you can safely forward only the env vars Codex needs (for example `GH_TOKEN` or release credentials) instead of exposing the entire runner environment. See [`docs/pass-through-env.md`](./docs/pass-through-env.md) for setup details and security tips.
+- **Extra guardrails and docs for teams** &mdash; opt-in actor allowlists (`allow-users`, `allow-bots`), stricter sandbox defaults (`drop-sudo`), and expanded security guidance help you keep subscription credentials and API keys locked down while still enjoying full Codex automation.
+
+If you only need the upstream behavior, you can continue using `openai/codex-action@v1`; otherwise grab this fork when those enhancements matter.
+
 ## Example: Create Your Own Pull Request Bot
 
 While Codex cloud offers a [powerful code review tool](https://developers.openai.com/codex/cloud/code-review) that you can use today, here is an example of how you can build your own code review workflow with `openai/codex-action` if you want to have more control over the experience.
@@ -172,7 +182,8 @@ jobs:
   `sandbox: danger-full-access` or `safety-strategy: unsafe` increases the risk of
   token exfiltration, so prefer scoped credentials and the stricter sandbox modes.
   See [`examples/pass-through-env.yml`](./examples/pass-through-env.yml) for a
-  full workflow.
+  full workflow, and [`docs/pass-through-env.md`](./docs/pass-through-env.md) for a
+  deeper walkthrough that covers rotation and troubleshooting.
 
 - Run this action after `actions/checkout@v5` so Codex has access to your repository contents.
 - To use a non-default Responses endpoint (for example Azure OpenAI), set `responses-api-endpoint` to the provider's URL while keeping `openai-api-key` populated; the proxy will still send `Authorization: Bearer <key>` upstream.
@@ -230,6 +241,8 @@ If you already have a Codex login on a developer machine, you can export your CL
 Notes:
 - Do not provide both `openai-api-key` and `codex-auth-json-b64` unless you specifically want to use the Responses API proxy; if both are present, the proxy configuration takes precedence.
 - `auth.json` is sensitive. This action writes it with file mode `0600`. Prefer `safety-strategy: drop-sudo` or `unprivileged-user` to limit risk.
+
+For an end-to-end walkthrough of exporting, encoding, storing, and rotating these credentials, see [`docs/subscription-auth.md`](./docs/subscription-auth.md).
 
 ## Version History
 
