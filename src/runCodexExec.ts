@@ -4,6 +4,7 @@ import path from "path";
 import os from "os";
 import { setOutput } from "@actions/core";
 import { checkOutput } from "./checkOutput";
+import { forwardSelectedEnvVars } from "./passThroughEnv";
 
 export type PromptSource =
   | {
@@ -48,6 +49,7 @@ export async function runCodexExec({
   safetyStrategy,
   codexUser,
   sandbox,
+  passThroughEnv,
 }: {
   prompt: PromptSource;
   codexHome: string | null;
@@ -60,6 +62,7 @@ export async function runCodexExec({
   safetyStrategy: SafetyStrategy;
   codexUser: string | null;
   sandbox: SandboxMode;
+  passThroughEnv: Array<string>;
 }): Promise<void> {
   let input: string;
   switch (prompt.type) {
@@ -114,7 +117,12 @@ export async function runCodexExec({
       throw new Error("could not find 'codex' in PATH");
     }
 
-    command.push("sudo", "-u", codexUser, "--");
+    const sudoArgs = ["sudo"];
+    if (passThroughEnv.length > 0) {
+      sudoArgs.push(`--preserve-env=${passThroughEnv.join(",")}`);
+    }
+    sudoArgs.push("-u", codexUser, "--");
+    command.push(...sudoArgs);
   }
 
   command.push(
@@ -146,13 +154,35 @@ export async function runCodexExec({
   command.push("--sandbox", sandboxMode);
 
   const env = { ...process.env };
+  const protectedEnvKeys = new Set<string>();
+  const setEnvAndProtect = (key: string, value: string) => {
+    env[key] = value;
+    protectedEnvKeys.add(key);
+  };
+
   if (!env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE) {
-    env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE = "codex_github_action";
+    setEnvAndProtect("CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "codex_github_action");
   }
   let extraEnv = "";
   if (codexHome != null) {
-    env.CODEX_HOME = codexHome;
+    setEnvAndProtect("CODEX_HOME", codexHome);
     extraEnv = `CODEX_HOME=${codexHome} `;
+  }
+
+  // Any env var that we forward here becomes visible to Codex and any commands
+  // that it runs, so never log or otherwise expose their values.
+  const { forwarded, missing } = forwardSelectedEnvVars({
+    names: passThroughEnv,
+    sourceEnv: process.env,
+    targetEnv: env,
+    protectedKeys: protectedEnvKeys,
+  });
+
+  if (forwarded.length > 0) {
+    console.log(`Forwarding env vars to Codex: ${forwarded.join(", ")}`);
+  }
+  for (const name of missing) {
+    console.log(`Requested env var "${name}" is not set; skipping.`);
   }
 
   // Split the `program` from the `args` for `spawn()`.

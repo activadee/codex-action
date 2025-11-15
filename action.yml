@@ -43,6 +43,13 @@ inputs:
     description: "Additional args to pass through to `codex exec`. If this value starts with `[`, it will be parsed as a JSON array; otherwise, it will be parsed as a shell-like string."
     required: false
     default: ""
+  pass-through-env:
+    description: |
+      Optional list of environment variable names that should be forwarded to the Codex subprocess.
+      Accepts newline-separated or comma-separated values. Use with caution because any forwarded
+      variables (including secrets) become accessible to Codex.
+    required: false
+    default: ""
   output-schema:
     description: "Inline schema contents to use with `codex exec --output-schema`."
     required: false
@@ -301,6 +308,7 @@ runs:
         CODEX_EFFORT: ${{ inputs.effort }}
         CODEX_SAFETY_STRATEGY: ${{ inputs['safety-strategy'] }}
         CODEX_USER: ${{ inputs['codex-user'] }}
+        CODEX_PASS_THROUGH_ENV: ${{ inputs['pass-through-env'] }}
         FORCE_COLOR: 1
       shell: bash
       run: |
@@ -317,4 +325,5 @@ runs:
             --model "$CODEX_MODEL" \
             --effort "$CODEX_EFFORT" \
             --safety-strategy "$CODEX_SAFETY_STRATEGY" \
-            --codex-user "$CODEX_USER"
+            --codex-user "$CODEX_USER" \
+            --pass-through-env "$CODEX_PASS_THROUGH_ENV"

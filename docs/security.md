@@ -30,6 +30,21 @@ To underscore the importance of specifying either `drop-sudo` or `unprivileged-u
 
 In the unfortunate event that your API key has leaked, see [this article](https://help.openai.com/en/articles/9047852-how-can-i-delete-my-api-key) that explains how to delete/revoke an API key using the [OpenAI Platform's API keys page](https://platform.openai.com/api-keys).
 
+## Forwarding additional environment variables
+
+Some workflows need Codex to access other credentials (for example a short-lived
+`GH_TOKEN` to push code or a `SENTRY_AUTH_TOKEN` to publish releases). Use the
+`pass-through-env` input to explicitly list the environment variables that should
+be exposed to Codex. The input accepts newline- or comma-separated names, and you
+must still set the actual values on the step via `env`.
+
+- Treat this feature as opt-in and provide the narrowest set of names possible.
+- Prefer scoped tokens (e.g., fine-grained GitHub PATs) and rotate credentials
+  regularly since Codex and any commands it runs can read them in plain text.
+- The risk of token exfiltration increases when combined with
+  `sandbox: danger-full-access` or `safety-strategy: unsafe`, so pair pass-through
+  env vars with the strictest sandbox settings your workflow allows.
+
 ## Protecting your Codex `auth.json`
 
 When using ChatGPT subscription auth with this action, you provide a base64-encoded `auth.json` via the `codex-auth-json-b64` input (ideally stored in `secrets`). Treat this value with the same care as an API key:

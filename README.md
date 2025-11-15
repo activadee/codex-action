@@ -104,6 +104,7 @@ For a ChatGPT subscription auth variant, see `examples/code-review-subscription.
 | `sandbox`                | Sandbox mode for Codex. One of `workspace-write` (default), `read-only` or `danger-full-access`.                                               | `""`        |
 | `codex-version`          | Version of `@openai/codex` to install.                                                                                                         | `""`        |
 | `codex-args`             | Extra arguments forwarded to `codex exec`. Accepts JSON arrays (`["--flag", "value"]`) or shell-style strings.                                 | `""`        |
+| `pass-through-env`       | Optional newline- or comma-separated list of environment variable names forwarded to Codex. Only include the specific secrets Codex must read. | `""`        |
 | `output-schema`          | Inline schema contents written to a temp file and passed to `codex exec --output-schema`. Mutually exclusive with `output-schema-file`.        | `""`        |
 | `output-schema-file`     | Schema file forwarded to `codex exec --output-schema`. Leave empty to skip passing the option.                                                 | `""`        |
 | `model`                  | Model the agent should use. Leave empty to let Codex pick its default.                                                                         | `""`        |
@@ -147,6 +148,31 @@ jobs:
 ```
 
 ## Additional tips
+
+### Forwarding environment variables
+  If Codex needs access to workflow secrets (for example `GH_TOKEN` to push tags or
+  `SENTRY_AUTH_TOKEN` for release uploads), explicitly list those variable names in
+  the `pass-through-env` input and set the actual values via the workflow `env`
+  block. The input accepts either newline-separated or comma-separated names:
+
+  ```yaml
+  - uses: openai/codex-action@v1
+    with:
+      pass-through-env: |
+        GH_TOKEN
+        SENTRY_AUTH_TOKEN
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+  ```
+
+  Forwarding env vars is opt-in so you can keep the rest of the GitHub Actions
+  environment hidden from Codex. Whatever you expose here becomes visible to Codex
+  and any commands it runs; combining this feature with
+  `sandbox: danger-full-access` or `safety-strategy: unsafe` increases the risk of
+  token exfiltration, so prefer scoped credentials and the stricter sandbox modes.
+  See [`examples/pass-through-env.yml`](./examples/pass-through-env.yml) for a
+  full workflow.
 
 - Run this action after `actions/checkout@v5` so Codex has access to your repository contents.
 - To use a non-default Responses endpoint (for example Azure OpenAI), set `responses-api-endpoint` to the provider's URL while keeping `openai-api-key` populated; the proxy will still send `Authorization: Bearer <key>` upstream.

@@ -18,6 +18,7 @@ import parseArgsStringToArgv from "string-argv";
 import { writeProxyConfig } from "./writeProxyConfig";
 import { checkOutput } from "./checkOutput";
 import { writeAuthJson } from "./writeAuthJson";
+import { parsePassThroughEnvInput } from "./passThroughEnv";
 
 export async function main() {
   const program = new Command();
@@ -193,6 +194,11 @@ export async function main() {
       "--codex-user <user>",
       "User to run codex exec as when using the 'unprivileged-user' safety strategy."
     )
+    .option(
+      "--pass-through-env <env>",
+      "Newline- or comma-separated list of env var names to forward to Codex.",
+      ""
+    )
     .action(
       async (options: {
         prompt: string;
@@ -208,6 +214,7 @@ export async function main() {
         effort: string;
         safetyStrategy: string;
         codexUser: string;
+        passThroughEnv: string;
       }) => {
         const {
           prompt,
@@ -223,7 +230,16 @@ export async function main() {
           effort,
           safetyStrategy,
           codexUser,
+          passThroughEnv,
         } = options;
+
+        const { names: passThroughEnvNames, invalidNames } =
+          parsePassThroughEnvInput(passThroughEnv ?? "");
+        if (invalidNames.length > 0) {
+          console.warn(
+            `Ignoring invalid pass-through env var names: ${invalidNames.join(", ")}`
+          );
+        }
 
         const normalizedPrompt = emptyAsNull(prompt);
         const normalizedPromptFile = emptyAsNull(promptFile);
@@ -283,6 +299,7 @@ export async function main() {
           effort: emptyAsNull(effort),
           safetyStrategy: toSafetyStrategy(safetyStrategy),
           codexUser: emptyAsNull(codexUser),
+          passThroughEnv: passThroughEnvNames,
         });
       }
     );

@@ -1,0 +1,29 @@
+name: Codex with env passthrough
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  codex:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      # Tokens are scoped at the workflow level. They are not forwarded to Codex
+      # unless they are explicitly listed in pass-through-env below.
+      GH_TOKEN: ${{ secrets.GH_DEPLOY_TOKEN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Run Codex with env passthrough
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .github/codex/release.md
+          pass-through-env: |
+            GH_TOKEN
+            SENTRY_AUTH_TOKEN
+        # Codex can now run commands that need GH_TOKEN (for pushes) and
+        # SENTRY_AUTH_TOKEN (for release uploads).
