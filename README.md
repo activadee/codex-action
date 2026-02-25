@@ -124,6 +124,15 @@ For a ChatGPT subscription auth variant, see `examples/code-review-subscription.
 | `codex-user`             | Username to run Codex as when `safety-strategy` is `unprivileged-user`.                                                                        | `""`        |
 | `allow-users`            | List of GitHub usernames who can trigger the action in addition to those who have write access to the repo.                                    | `""`        |
 | `allow-bots`             | Allow runs triggered by GitHub Apps/bot accounts to bypass the write-access check.                                                             | `false`     |
+| `capture-json-events`    | Capture `codex exec --json` output and parse metadata (session ID + usage).                                                                    | `false`     |
+| `json-events-file`       | Optional path to write raw JSONL events when JSON capture is enabled.                                                                            | `""`        |
+| `write-step-summary`     | Write run metadata and a final-message preview to GitHub Step Summary.                                                                          | `true`      |
+| `trigger-phrase`         | Optional phrase that must appear in issue/PR/comment text for the action to proceed.                                                            | `""`        |
+| `label-trigger`          | Optional issue/PR label name that triggers execution.                                                                                             | `""`        |
+| `assignee-trigger`       | Optional issue/PR assignee username that triggers execution.                                                                                      | `""`        |
+| `track-progress`         | Create/update a progress comment on issue/PR events while Codex runs.                                                                            | `false`     |
+| `use-sticky-comment`     | When tracking progress, reuse one marker-based comment instead of creating new comments.                                                         | `false`     |
+| `sanitize-github-context`| Sanitize untrusted GitHub payload text before deriving prompts from trigger-driven events.                                                       | `true`      |
 
 ## Safety Strategy
 
@@ -143,9 +152,16 @@ See [Protecting your `OPENAI_API_KEY`](./docs/security.md#protecting-your-openai
 
 ## Outputs
 
-| Name            | Description                             |
-| --------------- | --------------------------------------- |
-| `final-message` | Final message returned by `codex exec`. |
+| Name                 | Description                                                                                     |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
+| `final-message`      | Final message returned by `codex exec`.                                                        |
+| `structured-output`  | Stringified JSON when `output-schema` is used and Codex returns valid JSON in the final message. |
+| `usage-json`         | Stringified token usage extracted from JSON events (`input_tokens`, `cached_input_tokens`, `output_tokens`). |
+| `execution-file`     | Path to the raw JSONL event log when `capture-json-events` is enabled.                         |
+| `session-id`         | Session/thread ID extracted from JSON events (diagnostic only).                                |
+| `conclusion`         | Codex run result (`success` or `failure`).                                                     |
+| `triggered`          | Whether trigger conditions matched and the action proceeded.                                    |
+| `tracking-comment-id`| Comment ID used for progress tracking when `track-progress` is enabled.                        |
 
 As we saw in the example above, we took the `final-message` output of the `run_codex` step and made it an output of the `codex` job in the workflow:
 
@@ -184,6 +200,37 @@ jobs:
   See [`examples/pass-through-env.yml`](./examples/pass-through-env.yml) for a
   full workflow, and [`docs/pass-through-env.md`](./docs/pass-through-env.md) for a
   deeper walkthrough that covers rotation and troubleshooting.
+
+### Trigger-driven workflows
+  You can gate execution on GitHub event payload data by setting one or more of:
+  `trigger-phrase`, `label-trigger`, or `assignee-trigger`.
+
+  - If no trigger inputs are configured, behavior is unchanged (the action proceeds).
+  - If trigger inputs are configured and none match, the action no-ops cleanly with
+    output `triggered=false`.
+  - If trigger inputs are configured and a match occurs, the action can derive a
+    prompt from the event payload when `prompt`/`prompt-file` are not provided.
+
+  The `sanitize-github-context` input is `true` by default to strip hidden markup
+  and zero-width characters before deriving prompt text.
+  See [`examples/triggered-progress-review.yml`](./examples/triggered-progress-review.yml)
+  for an end-to-end trigger workflow.
+
+### JSON event capture and summaries
+  Enable `capture-json-events: true` when you want machine-readable execution
+  metadata from `codex exec --json`. This powers outputs like `session-id`,
+  `usage-json`, and `execution-file`.
+
+  You can control where the raw JSONL goes with `json-events-file`; otherwise the
+  action writes to a temporary file and exposes its path via `execution-file`.
+
+  `write-step-summary` defaults to `true` and appends run metadata plus a concise
+  final-message preview to the GitHub Step Summary.
+
+### Progress comments
+  Set `track-progress: true` on issue/PR events to create/update a progress comment
+  while Codex runs. Add `use-sticky-comment: true` to reuse one marker-based comment
+  across runs and reduce comment noise.
 
 - Run this action after `actions/checkout@v5` so Codex has access to your repository contents.
 - To use a non-default Responses endpoint (for example Azure OpenAI), set `responses-api-endpoint` to the provider's URL while keeping `openai-api-key` populated; the proxy will still send `Authorization: Bearer <key>` upstream.

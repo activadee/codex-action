@@ -1,10 +1,11 @@
 import { spawn } from "child_process";
-import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import path from "path";
 import os from "os";
 import { setOutput } from "@actions/core";
 import { checkOutput } from "./checkOutput";
 import { forwardSelectedEnvVars } from "./passThroughEnv";
+import { ExecEventMetadata, TurnUsage, parseExecJsonEvents } from "./execJsonEvents";
 
 export type PromptSource =
   | {
@@ -50,6 +51,9 @@ export async function runCodexExec({
   codexUser,
   sandbox,
   passThroughEnv,
+  captureJsonEvents,
+  jsonEventsFile,
+  writeStepSummary,
 }: {
   prompt: PromptSource;
   codexHome: string | null;
@@ -63,7 +67,15 @@ export async function runCodexExec({
   codexUser: string | null;
   sandbox: SandboxMode;
   passThroughEnv: Array<string>;
+  captureJsonEvents: boolean;
+  jsonEventsFile: string | null;
+  writeStepSummary: boolean;
 }): Promise<void> {
+  setOutput("structured-output", "");
+  setOutput("session-id", "");
+  setOutput("usage-json", "");
+  setOutput("execution-file", "");
+
   let input: string;
   switch (prompt.type) {
     case "inline":
@@ -88,6 +100,14 @@ export async function runCodexExec({
     outputSchema,
     runAsUser
   );
+  const shouldCaptureJsonEvents =
+    captureJsonEvents || jsonEventsFile != null;
+  const resolvedJsonEventsFile = shouldCaptureJsonEvents
+    ? await resolveJsonEventsFile(jsonEventsFile)
+    : null;
+  if (resolvedJsonEventsFile != null) {
+    setOutput("execution-file", resolvedJsonEventsFile);
+  }
   const sandboxMode = await determineSandboxMode({
     safetyStrategy,
     requestedSandbox: sandbox,
@@ -151,6 +171,10 @@ export async function runCodexExec({
 
   command.push(...extraArgs);
 
+  if (shouldCaptureJsonEvents) {
+    command.push("--json");
+  }
+
   command.push("--sandbox", sandboxMode);
 
   const env = { ...process.env };
@@ -194,12 +218,26 @@ export async function runCodexExec({
   );
   try {
     await new Promise((resolve, reject) => {
+      let stdoutBuffer = "";
       const child = spawn(program, command, {
         env,
-        stdio: ["pipe", "inherit", "inherit"],
+        stdio: shouldCaptureJsonEvents
+          ? ["pipe", "pipe", "inherit"]
+          : ["pipe", "inherit", "inherit"],
       });
+      if (child.stdin == null) {
+        reject(new Error("Failed to open stdin for codex exec process."));
+        return;
+      }
       child.stdin.write(input);
       child.stdin.end();
+
+      if (shouldCaptureJsonEvents && child.stdout != null) {
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (chunk) => {
+          stdoutBuffer += chunk;
+        });
+      }
 
       child.on("error", reject);
 
@@ -210,7 +248,28 @@ export async function runCodexExec({
         }
 
         try {
-          await finalizeExecution(outputFile, runAsUser);
+          let eventMetadata: ExecEventMetadata | null = null;
+          if (shouldCaptureJsonEvents && resolvedJsonEventsFile != null) {
+            await writeFile(resolvedJsonEventsFile, stdoutBuffer, "utf8");
+            eventMetadata = parseExecJsonEvents(stdoutBuffer);
+            if (eventMetadata.malformedLines > 0) {
+              console.warn(
+                `Ignored ${eventMetadata.malformedLines} malformed JSON event line(s) from codex exec.`
+              );
+            }
+          }
+
+          await finalizeExecution({
+            outputFile,
+            runAsUser,
+            outputSchemaRequested: outputSchema != null,
+            eventMetadata,
+            writeStepSummary,
+            model,
+            effort,
+            sandboxMode,
+            safetyStrategy,
+          });
           resolve(undefined);
         } catch (err) {
           reject(err);
@@ -223,8 +282,27 @@ export async function runCodexExec({
 }
 
 async function finalizeExecution(
-  outputFile: OutputFile,
-  runAsUser: string | null
+  {
+    outputFile,
+    runAsUser,
+    outputSchemaRequested,
+    eventMetadata,
+    writeStepSummary,
+    model,
+    effort,
+    sandboxMode,
+    safetyStrategy,
+  }: {
+    outputFile: OutputFile;
+    runAsUser: string | null;
+    outputSchemaRequested: boolean;
+    eventMetadata: ExecEventMetadata | null;
+    writeStepSummary: boolean;
+    model: string | null;
+    effort: string | null;
+    sandboxMode: SandboxMode;
+    safetyStrategy: SafetyStrategy;
+  }
 ): Promise<void> {
   try {
     let lastMessage: string;
@@ -240,6 +318,38 @@ async function finalizeExecution(
       ]);
     }
     setOutput("final-message", lastMessage);
+
+    if (outputSchemaRequested) {
+      const structuredOutput = tryParseStructuredOutput(lastMessage);
+      if (structuredOutput != null) {
+        setOutput("structured-output", JSON.stringify(structuredOutput));
+      } else {
+        console.warn(
+          "Final message is not valid JSON; leaving structured-output empty."
+        );
+      }
+    }
+
+    if (eventMetadata?.sessionId != null) {
+      setOutput("session-id", eventMetadata.sessionId);
+    }
+    if (eventMetadata?.usage != null) {
+      setOutput("usage-json", JSON.stringify(eventMetadata.usage));
+    }
+
+    if (writeStepSummary) {
+      await writeExecutionStepSummary({
+        model,
+        effort,
+        sandboxMode,
+        safetyStrategy,
+        sessionId: eventMetadata?.sessionId ?? null,
+        usage: eventMetadata?.usage ?? null,
+        malformedEventLines: eventMetadata?.malformedLines ?? 0,
+        finalMessage: lastMessage,
+        structuredOutputEnabled: outputSchemaRequested,
+      });
+    }
   } finally {
     await cleanupTempOutput(outputFile, runAsUser);
   }
@@ -370,4 +480,91 @@ async function determineSandboxMode({
   } else {
     return requestedSandbox;
   }
+}
+
+async function resolveJsonEventsFile(
+  explicitJsonEventsFile: string | null
+): Promise<string> {
+  if (explicitJsonEventsFile != null) {
+    await mkdir(path.dirname(explicitJsonEventsFile), { recursive: true });
+    return explicitJsonEventsFile;
+  }
+
+  const dir = await mkdtemp(path.join(os.tmpdir(), "codex-events-"));
+  return path.join(dir, "events.jsonl");
+}
+
+function tryParseStructuredOutput(message: string): unknown | null {
+  const trimmed = message.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+async function writeExecutionStepSummary({
+  model,
+  effort,
+  sandboxMode,
+  safetyStrategy,
+  sessionId,
+  usage,
+  malformedEventLines,
+  finalMessage,
+  structuredOutputEnabled,
+}: {
+  model: string | null;
+  effort: string | null;
+  sandboxMode: SandboxMode;
+  safetyStrategy: SafetyStrategy;
+  sessionId: string | null;
+  usage: TurnUsage | null;
+  malformedEventLines: number;
+  finalMessage: string;
+  structuredOutputEnabled: boolean;
+}): Promise<void> {
+  const summaryFile = process.env.GITHUB_STEP_SUMMARY;
+  if (summaryFile == null || summaryFile.trim().length === 0) {
+    return;
+  }
+
+  const preview =
+    finalMessage.trim().length === 0
+      ? "(empty)"
+      : truncateForSummary(finalMessage.trim(), 1600);
+
+  const lines = [
+    "## Codex Action Run",
+    "",
+    `- Conclusion: success`,
+    `- Model: ${model ?? "(default)"}`,
+    `- Effort: ${effort ?? "(default)"}`,
+    `- Sandbox: ${sandboxMode}`,
+    `- Safety strategy: ${safetyStrategy}`,
+    `- Structured output requested: ${structuredOutputEnabled ? "yes" : "no"}`,
+    `- Session ID: ${sessionId ?? "(unavailable)"}`,
+    `- Usage: ${usage == null ? "(unavailable)" : JSON.stringify(usage)}`,
+    `- Malformed JSON event lines ignored: ${malformedEventLines}`,
+    "",
+    "<details><summary>Final message preview</summary>",
+    "",
+    "```text",
+    preview.replace(/```/g, "``\\`"),
+    "```",
+    "</details>",
+    "",
+  ];
+
+  await writeFile(summaryFile, lines.join("\n"), { flag: "a" });
+}
+
+function truncateForSummary(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength)}\n...<truncated>`;
 }

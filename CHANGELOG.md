@@ -11,6 +11,16 @@
 - align bot bypass defaults so `allow-bots` defaults to `false` across CLI/action paths
 - expand CI to run tests plus workflow linting (`actionlint` + `shellcheck`)
 
+### Migration notes
+
+- This release is additive for `v1.x`: existing workflows that only use `prompt`/`prompt-file` and consume `final-message` continue to work without changes.
+- New observability inputs are optional: `capture-json-events`, `json-events-file`, and `write-step-summary`.
+- New outputs are now available when needed: `structured-output`, `usage-json`, `execution-file`, `session-id`, `conclusion`, `triggered`, and `tracking-comment-id`.
+- Trigger-based execution is opt-in. If you configure any trigger input (`trigger-phrase`, `label-trigger`, or `assignee-trigger`) and no trigger matches, the action exits cleanly with `triggered=false`.
+- Progress comments are opt-in (`track-progress`) and require suitable workflow permissions (for example `issues: write` / `pull-requests: write`).
+- `structured-output` is only populated when `output-schema` (or `output-schema-file`) is used and the final Codex message is valid JSON.
+- No cross-run session resume behavior is introduced in this release (intentional for ephemeral runner compatibility).
+
 ## [v1.4](https://github.com/openai/codex-action/tree/v1.4) (2005-11-19)
 
 - [#58](https://github.com/openai/codex-action/pull/58) revert #56 and use the latest stable version of Codex CLI again
