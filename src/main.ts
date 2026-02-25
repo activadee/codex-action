@@ -20,6 +20,8 @@ import { writeAuthJson } from "./writeAuthJson";
 import { parsePassThroughEnvInput } from "./passThroughEnv";
 import { parseExtraArgs } from "./parseExtraArgs";
 import { probeProxyFromServerInfoFile } from "./probeProxy";
+import { detectTrigger } from "./triggerDetection";
+import { updateProgressComment } from "./progressComment";
 
 export async function main() {
   const program = new Command();
@@ -182,6 +184,124 @@ export async function main() {
     );
 
   program
+    .command("detect-trigger")
+    .description(
+      "Evaluates trigger inputs against the GitHub event payload and optionally derives a prompt file"
+    )
+    .requiredOption(
+      "--trigger-phrase <phrase>",
+      "Trigger phrase to search for in issue/PR/comment text."
+    )
+    .requiredOption(
+      "--label-trigger <label>",
+      "Label name that triggers execution."
+    )
+    .requiredOption(
+      "--assignee-trigger <username>",
+      "Assignee username that triggers execution."
+    )
+    .requiredOption(
+      "--sanitize-github-context <boolean>",
+      "Whether to sanitize untrusted GitHub text before deriving prompts.",
+      parseBoolean
+    )
+    .action(
+      async (options: {
+        triggerPhrase: string;
+        labelTrigger: string;
+        assigneeTrigger: string;
+        sanitizeGitHubContext: boolean;
+      }) => {
+        const result = await detectTrigger({
+          triggerPhrase: options.triggerPhrase,
+          labelTrigger: options.labelTrigger,
+          assigneeTrigger: options.assigneeTrigger,
+          sanitizeGitHubContext: options.sanitizeGitHubContext,
+        });
+
+        let derivedPromptFile = "";
+        if (result.derivedPrompt != null && result.derivedPrompt.trim().length > 0) {
+          const dir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-trigger-"));
+          derivedPromptFile = path.join(dir, "prompt.md");
+          await fs.writeFile(derivedPromptFile, result.derivedPrompt, "utf8");
+        }
+
+        const { setOutput } = await import("@actions/core");
+        setOutput("triggered", result.triggered.toString());
+        setOutput("matched-by", result.matchedBy.join(","));
+        setOutput("derived-prompt-file", derivedPromptFile);
+
+        if (!result.configured) {
+          console.log(
+            "No trigger inputs configured; allowing action to continue."
+          );
+          return;
+        }
+
+        if (result.triggered) {
+          console.log(`Trigger matched via: ${result.matchedBy.join(", ")}`);
+        } else {
+          console.log(
+            "No trigger matched; action will no-op after this step."
+          );
+        }
+      }
+    );
+
+  program
+    .command("update-progress-comment")
+    .description("Creates or updates a progress comment on issue/PR events.")
+    .requiredOption(
+      "--mode <mode>",
+      "Progress comment mode: 'start' or 'finish'.",
+      parseProgressMode
+    )
+    .requiredOption(
+      "--use-sticky-comment <boolean>",
+      "When true, update a single marker-based comment when possible.",
+      parseBoolean
+    )
+    .requiredOption(
+      "--comment-id <id>",
+      "Existing comment ID to update (may be empty)."
+    )
+    .requiredOption(
+      "--conclusion <conclusion>",
+      "Run conclusion to include for finish mode."
+    )
+    .action(
+      async (options: {
+        mode: "start" | "finish";
+        useStickyComment: boolean;
+        commentId: string;
+        conclusion: string;
+      }) => {
+        const { setOutput } = await import("@actions/core");
+        const existingCommentId = parseOptionalCommentId(options.commentId);
+        const finalMessage = emptyAsNull(process.env.CODEX_FINAL_MESSAGE ?? "");
+
+        try {
+          const commentId = await updateProgressComment({
+            mode: options.mode,
+            useStickyComment: options.useStickyComment,
+            commentId: existingCommentId,
+            conclusion: emptyAsNull(options.conclusion),
+            finalMessage,
+          });
+          setOutput("comment-id", commentId == null ? "" : String(commentId));
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          console.warn(`Progress comment update failed: ${message}`);
+          setOutput(
+            "comment-id",
+            existingCommentId == null ? "" : String(existingCommentId)
+          );
+        }
+      }
+    );
+
+  program
     .command("run-codex-exec")
     .description("Invokes `codex exec` with the appropriate arguments")
     .requiredOption("--prompt <prompt>", "Prompt to pass to `codex exec`.")
@@ -230,6 +350,20 @@ export async function main() {
       "Newline- or comma-separated list of env var names to forward to Codex.",
       ""
     )
+    .requiredOption(
+      "--capture-json-events <boolean>",
+      "Capture codex exec JSON events from stdout (`codex exec --json`).",
+      parseBoolean
+    )
+    .requiredOption(
+      "--json-events-file <FILE>",
+      "Path where raw codex exec JSONL events should be written."
+    )
+    .requiredOption(
+      "--write-step-summary <boolean>",
+      "Write execution metadata to the GitHub step summary.",
+      parseBoolean
+    )
     .action(
       async (options: {
         prompt: string;
@@ -246,6 +380,9 @@ export async function main() {
         safetyStrategy: string;
         codexUser: string;
         passThroughEnv: string;
+        captureJsonEvents: boolean;
+        jsonEventsFile: string;
+        writeStepSummary: boolean;
       }) => {
         const {
           prompt,
@@ -262,6 +399,9 @@ export async function main() {
           safetyStrategy,
           codexUser,
           passThroughEnv,
+          captureJsonEvents,
+          jsonEventsFile,
+          writeStepSummary,
         } = options;
 
         const { names: passThroughEnvNames, invalidNames } =
@@ -318,20 +458,30 @@ export async function main() {
           };
         }
 
-        await runCodexExec({
-          prompt: promptSource,
-          codexHome: emptyAsNull(codexHome),
-          cd,
-          extraArgs,
-          explicitOutputFile: emptyAsNull(outputFile),
-          outputSchema: outputSchemaSource,
-          sandbox: toSandboxMode(sandbox),
-          model: emptyAsNull(model),
-          effort: emptyAsNull(effort),
-          safetyStrategy: toSafetyStrategy(safetyStrategy),
-          codexUser: emptyAsNull(codexUser),
-          passThroughEnv: passThroughEnvNames,
-        });
+        const { setOutput } = await import("@actions/core");
+        try {
+          await runCodexExec({
+            prompt: promptSource,
+            codexHome: emptyAsNull(codexHome),
+            cd,
+            extraArgs,
+            explicitOutputFile: emptyAsNull(outputFile),
+            outputSchema: outputSchemaSource,
+            sandbox: toSandboxMode(sandbox),
+            model: emptyAsNull(model),
+            effort: emptyAsNull(effort),
+            safetyStrategy: toSafetyStrategy(safetyStrategy),
+            codexUser: emptyAsNull(codexUser),
+            passThroughEnv: passThroughEnvNames,
+            captureJsonEvents,
+            jsonEventsFile: emptyAsNull(jsonEventsFile),
+            writeStepSummary,
+          });
+          setOutput("conclusion", "success");
+        } catch (error) {
+          setOutput("conclusion", "failure");
+          throw error;
+        }
       }
     );
 
@@ -428,6 +578,28 @@ function parseBoolean(value: string): boolean {
     return false;
   }
   throw new Error(`Invalid boolean value: ${value}`);
+}
+
+function parseProgressMode(value: string): "start" | "finish" {
+  switch (value.trim().toLowerCase()) {
+    case "start":
+    case "finish":
+      return value.trim().toLowerCase() as "start" | "finish";
+    default:
+      throw new Error(`Invalid mode: ${value}. Must be 'start' or 'finish'.`);
+  }
+}
+
+function parseOptionalCommentId(value: string): number | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Invalid comment id: ${value}`);
+  }
+  return parsed;
 }
 
 main();

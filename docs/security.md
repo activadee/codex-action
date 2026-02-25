@@ -16,6 +16,11 @@ There is a lot of valuable context that can be used to fuel your invocation of C
 - **Commit messages**: a pull request can be composed of many commits. The messages for individual commits often go unnoticed, but could read by Codex.
 - **Screenshots** screenshots and other media have been known to be used as vehicles for prompt injection.
 
+If you enable trigger-driven execution (`trigger-phrase`, `label-trigger`, or
+`assignee-trigger`) and let the action derive prompts from event payloads, keep
+`sanitize-github-context: true` enabled (default). It strips hidden comments and
+invisible characters before context is forwarded to Codex.
+
 <!-- TODO ## Protecting secrets -->
 
 ## Look out for API key abuse
