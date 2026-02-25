@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import path from "path";
 import os from "os";
 import { setOutput } from "@actions/core";
@@ -218,7 +218,7 @@ export async function runCodexExec({
       });
     });
   } finally {
-    await cleanupOutputSchema(resolvedOutputSchema);
+    await cleanupOutputSchema(resolvedOutputSchema, runAsUser);
   }
 }
 
@@ -317,7 +317,8 @@ async function resolveOutputSchema(
 }
 
 async function cleanupOutputSchema(
-  schema: ResolvedOutputSchema | null
+  schema: ResolvedOutputSchema | null,
+  runAsUser: string | null
 ): Promise<void> {
   if (schema == null) {
     return;
@@ -327,7 +328,11 @@ async function cleanupOutputSchema(
     case "explicit":
       return;
     case "temp":
-      await rm(schema.dir, { recursive: true, force: true });
+      if (runAsUser == null) {
+        await rm(schema.dir, { recursive: true, force: true });
+      } else {
+        await checkOutput(["sudo", "rm", "-rf", schema.dir]);
+      }
       return;
   }
 }

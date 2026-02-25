@@ -14,11 +14,12 @@ import {
 } from "./runCodexExec";
 import { dropSudo } from "./dropSudo";
 import { ensureActorHasWriteAccess } from "./checkActorPermissions";
-import parseArgsStringToArgv from "string-argv";
 import { writeProxyConfig } from "./writeProxyConfig";
 import { checkOutput } from "./checkOutput";
 import { writeAuthJson } from "./writeAuthJson";
 import { parsePassThroughEnvInput } from "./passThroughEnv";
+import { parseExtraArgs } from "./parseExtraArgs";
+import { probeProxyFromServerInfoFile } from "./probeProxy";
 
 export async function main() {
   const program = new Command();
@@ -35,6 +36,36 @@ export async function main() {
     .action(async (serverInfoFile: string) => {
       await readServerInfo(serverInfoFile);
     });
+
+  program
+    .command("probe-proxy")
+    .description(
+      "Check whether a Responses API proxy referenced by server info appears healthy"
+    )
+    .argument("<serverInfoFile>", "Path to the server info file")
+    .option(
+      "--fail-unhealthy",
+      "Exit non-zero when proxy is unhealthy",
+      false
+    )
+    .action(
+      async (
+        serverInfoFile: string,
+        options: { failUnhealthy: boolean }
+      ) => {
+        const result = await probeProxyFromServerInfoFile(serverInfoFile);
+        const { setOutput } = await import("@actions/core");
+        setOutput("healthy", result.healthy ? "true" : "false");
+        if (result.port != null) {
+          setOutput("port", result.port.toString());
+        }
+        console.log(result.reason);
+
+        if (!result.healthy && options.failUnhealthy) {
+          throw new Error(result.reason);
+        }
+      }
+    );
 
   program
     .command("resolve-codex-home")
@@ -311,9 +342,9 @@ export async function main() {
     )
     .option(
       "--allow-bots <boolean>",
-      "Allow GitHub App and bot actors to bypass the write-access check (default: true).",
+      "Allow GitHub App and bot actors to bypass the write-access check (default: false).",
       parseBoolean,
-      true
+      false
     )
     .option(
       "--allow-users <users>",
@@ -355,18 +386,6 @@ function parseIntStrict(value: string): number {
     throw new Error(`Invalid integer: ${value}`);
   }
   return parsed;
-}
-
-function parseExtraArgs(value: string): Array<string> {
-  if (value.length === 0) {
-    return [];
-  }
-
-  if (value.startsWith("[")) {
-    return JSON.parse(value);
-  } else {
-    return parseArgsStringToArgv(value);
-  }
 }
 
 function toSafetyStrategy(value: string): SafetyStrategy {

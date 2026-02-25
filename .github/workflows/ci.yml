@@ -33,6 +33,9 @@ jobs:
       - name: Build bundles
         run: pnpm run build
 
+      - name: Run tests
+        run: pnpm test
+
       - name: Ensure dist matches bundled output
         run: |
           status_output="$(git status --short -- dist)"
@@ -41,3 +44,23 @@ jobs:
             echo "$status_output"
             exit 1
           fi
+
+  lint-workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Install actionlint
+        run: |
+          mkdir -p "$PWD/bin"
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) latest "$PWD/bin"
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+
+      - name: Run actionlint
+        run: actionlint -color
