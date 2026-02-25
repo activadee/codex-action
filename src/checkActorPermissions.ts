@@ -18,7 +18,7 @@ type EnsureWriteAccessOptions = {
   actor?: string;
   repository?: string;
   /**
-   * When true (default), bot actors such as dependabot are allowed without
+   * When true, bot actors such as dependabot are allowed without
    * checking collaborator permissions. Set to false to require bots to pass the
    * same checks as human users.
    */
@@ -39,7 +39,7 @@ export async function ensureActorHasWriteAccess(
 ): Promise<WriteAccessCheck> {
   const actor = options.actor ?? process.env.GITHUB_ACTOR;
   const repository = options.repository ?? process.env.GITHUB_REPOSITORY;
-  const allowBotActors = options.allowBotActors ?? true;
+  const allowBotActors = options.allowBotActors ?? false;
 
   if (!actor || actor.trim().length === 0) {
     return {

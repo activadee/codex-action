@@ -1,5 +1,16 @@
 # codex-action Changelog
 
+## [Unreleased](https://github.com/openai/codex-action/tree/main)
+
+- set the default `model` input to `gpt-5.3-codex` while preserving opt-out via `model: ""`
+- pin the default `codex-version` input to `0.104.0` for deterministic installs
+- make proxy liveness checks active (port reachability) and restart when stale server-info is found
+- make `write-proxy-config` idempotent with managed blocks and legacy block cleanup
+- harden `codex-args` JSON parsing to require an array of strings
+- fix unprivileged temp schema cleanup path in `runCodexExec`
+- align bot bypass defaults so `allow-bots` defaults to `false` across CLI/action paths
+- expand CI to run tests plus workflow linting (`actionlint` + `shellcheck`)
+
 ## [v1.4](https://github.com/openai/codex-action/tree/v1.4) (2005-11-19)
 
 - [#58](https://github.com/openai/codex-action/pull/58) revert #56 and use the latest stable version of Codex CLI again

@@ -111,13 +111,13 @@ For a ChatGPT subscription auth variant, see `examples/code-review-subscription.
 | `prompt-file`            | Path (relative to the repository root) of a file that contains the prompt. Provide this or `prompt`.                                           | `""`        |
 | `output-file`            | File where the final Codex message is written. Leave empty to skip writing a file.                                                             | `""`        |
 | `working-directory`      | Directory passed to `codex exec --cd`. Defaults to the repository root.                                                                        | `""`        |
-| `sandbox`                | Sandbox mode for Codex. One of `workspace-write` (default), `read-only` or `danger-full-access`.                                               | `""`        |
-| `codex-version`          | Version of `@openai/codex` to install.                                                                                                         | `""`        |
+| `sandbox`                | Sandbox mode for Codex. One of `workspace-write` (default), `read-only` or `danger-full-access`.                                               | `workspace-write` |
+| `codex-version`          | Version of `@openai/codex` to install. Set to `""` to install the latest available version.                                                    | `0.104.0`   |
 | `codex-args`             | Extra arguments forwarded to `codex exec`. Accepts JSON arrays (`["--flag", "value"]`) or shell-style strings.                                 | `""`        |
 | `pass-through-env`       | Optional newline- or comma-separated list of environment variable names forwarded to Codex. Only include the specific secrets Codex must read. | `""`        |
 | `output-schema`          | Inline schema contents written to a temp file and passed to `codex exec --output-schema`. Mutually exclusive with `output-schema-file`.        | `""`        |
 | `output-schema-file`     | Schema file forwarded to `codex exec --output-schema`. Leave empty to skip passing the option.                                                 | `""`        |
-| `model`                  | Model the agent should use. Leave empty to let Codex pick its default.                                                                         | `""`        |
+| `model`                  | Model the agent should use. Defaults to `gpt-5.3-codex`; set `model: ""` to let Codex pick its default.                                       | `gpt-5.3-codex` |
 | `effort`                 | Reasoning effort the agent should use. Leave empty to let Codex pick its default.                                                              | `""`        |
 | `codex-home`             | Directory to use as the Codex CLI home (config/cache). Uses the CLI default when empty.                                                        | `""`        |
 | `safety-strategy`        | Controls how the action restricts Codex privileges. See [Safety strategy](#safety-strategy).                                                   | `drop-sudo` |

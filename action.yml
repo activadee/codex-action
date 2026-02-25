@@ -38,7 +38,7 @@ inputs:
   codex-version:
     description: "Version of `@openai/codex` to install."
     required: false
-    default: ""
+    default: "0.104.0"
   codex-args:
     description: "Additional args to pass through to `codex exec`. If this value starts with `[`, it will be parsed as a JSON array; otherwise, it will be parsed as a shell-like string."
     required: false
@@ -59,9 +59,9 @@ inputs:
     required: false
     default: ""
   model:
-    description: "Model the agent should use."
+    description: "Model the agent should use. Defaults to `gpt-5.3-codex`; set to an empty string to defer to the Codex CLI/provider default."
     required: false
-    default: ""
+    default: "gpt-5.3-codex"
   effort:
     description: "Reasoning effort the agent should use."
     required: false
@@ -143,11 +143,23 @@ runs:
 
     - name: Install Codex CLI
       shell: bash
-      run: npm install -g "@openai/codex@${{ inputs['codex-version'] }}"
+      run: |
+        version="${{ inputs['codex-version'] }}"
+        if [ -n "$version" ]; then
+          npm install -g "@openai/codex@$version"
+        else
+          npm install -g "@openai/codex"
+        fi
 
     - name: Install Codex Responses API proxy
       shell: bash
-      run: npm install -g "@openai/codex-responses-api-proxy@${{ inputs['codex-version'] }}"
+      run: |
+        version="${{ inputs['codex-version'] }}"
+        if [ -n "$version" ]; then
+          npm install -g "@openai/codex-responses-api-proxy@$version"
+        else
+          npm install -g "@openai/codex-responses-api-proxy"
+        fi
 
     - name: Resolve Codex home
       id: resolve_home
@@ -177,18 +189,13 @@ runs:
           echo "exists=false" >> "$GITHUB_OUTPUT"
         fi
 
-    - name: Check Responses API proxy status
-      id: start_proxy
+    - name: Probe existing Responses API proxy
+      id: probe_proxy
       if: ${{ inputs['openai-api-key'] != '' }}
       shell: bash
       run: |
         server_info_file="${{ steps.derive_server_info.outputs.server_info_file }}"
-        if [ -s "$server_info_file" ]; then
-          echo "Responses API proxy already appears to be running (found $server_info_file)."
-          echo "server_info_file_exists=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "server_info_file_exists=false" >> "$GITHUB_OUTPUT"
-        fi
+        node "${{ github.action_path }}/dist/main.js" probe-proxy "$server_info_file"
 
     - name: Write Codex auth.json (subscription auth)
       if: ${{ inputs['codex-auth-json-b64'] != '' }}
@@ -206,17 +213,20 @@ runs:
     # key do not end up in the memory of the `codex-responses-api-proxy`
     # process where environment variables are stored.
     - name: Start Responses API proxy
-      if: ${{ inputs['openai-api-key'] != '' && steps.start_proxy.outputs.server_info_file_exists == 'false' }}
+      if: ${{ inputs['openai-api-key'] != '' && steps.probe_proxy.outputs.healthy != 'true' }}
       env:
         PROXY_API_KEY: ${{ inputs['openai-api-key'] }}
       shell: bash
       run: |
         upstream_url="${{ inputs['responses-api-endpoint'] }}"
+        server_info_file="${{ steps.derive_server_info.outputs.server_info_file }}"
+
+        rm -f "$server_info_file"
 
         args=(
           codex-responses-api-proxy
           --http-shutdown
-          --server-info "${{ steps.derive_server_info.outputs.server_info_file }}"
+          --server-info "$server_info_file"
         )
 
         if [ -n "$upstream_url" ]; then
@@ -228,18 +238,20 @@ runs:
         ) &
 
     - name: Wait for Responses API proxy
-      if: ${{ inputs['openai-api-key'] != '' && steps.start_proxy.outputs.server_info_file_exists == 'false' }}
+      if: ${{ inputs['openai-api-key'] != '' && steps.probe_proxy.outputs.healthy != 'true' }}
       shell: bash
       run: |
         server_info_file="${{ steps.derive_server_info.outputs.server_info_file }}"
-        for _ in {1..10}; do
-          if [ -s "$server_info_file" ]; then
+        for _ in {1..15}; do
+          if [ -s "$server_info_file" ] && \
+            node "${{ github.action_path }}/dist/main.js" probe-proxy "$server_info_file" --fail-unhealthy >/dev/null 2>&1; then
             break
           fi
           sleep 1
         done
-        if [ ! -s "$server_info_file" ]; then
-          echo "responses-api-proxy did not write server info" >&2
+
+        if ! node "${{ github.action_path }}/dist/main.js" probe-proxy "$server_info_file" --fail-unhealthy; then
+          echo "responses-api-proxy failed health check" >&2
           exit 1
         fi
 
